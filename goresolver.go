@@ -2,9 +2,10 @@ package goresolver
 
 import (
 	"errors"
-	"github.com/miekg/dns"
-	"time"
 	"strings"
+	"time"
+
+	"github.com/miekg/dns"
 )
 
 const (
@@ -36,6 +37,21 @@ var (
 )
 
 var resolver *Resolver
+
+type FetchedMessage struct {
+	Qname   string
+	Qtype   string
+	Message *dns.Msg
+}
+
+type FetchedRecord struct {
+	Qname  string
+	Qtype  string
+	Record dns.RR
+}
+
+var FetchedRecords []FetchedRecord
+var FetchedMessages []FetchedMessage
 
 // NewDNSMessage creates and initializes a dns.Msg object, with EDNS enabled
 // and the DO (DNSSEC OK) flag set.  It returns a pointer to the created
@@ -79,6 +95,11 @@ func localQuery(qname string, qtype uint16) (*dns.Msg, error) {
 func queryDelegation(domainName string) (signedZone *SignedZone, err error) {
 
 	signedZone = NewSignedZone(domainName)
+
+	// dummy query NSEC records
+	queryRRset(domainName, dns.TypeNSEC)
+	queryRRset(domainName, dns.TypeNSEC3)
+	queryRRset(domainName, dns.TypeNSEC3PARAM)
 
 	signedZone.dnskey, err = queryRRset(domainName, dns.TypeDNSKEY)
 	if err != nil {

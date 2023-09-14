@@ -1,8 +1,9 @@
 package goresolver
 
 import (
-	"github.com/miekg/dns"
 	"log"
+
+	"github.com/miekg/dns"
 )
 
 type RRSet struct {
@@ -13,6 +14,11 @@ type RRSet struct {
 func queryRRset(qname string, qtype uint16) (*RRSet, error) {
 
 	r, err := resolver.queryFn(qname, qtype)
+	FetchedMessages = append(FetchedMessages, FetchedMessage{
+		Qname:   qname,
+		Qtype:   dns.TypeToString[qtype],
+		Message: r,
+	})
 
 	if err != nil {
 		log.Printf("cannot lookup %v", err)
@@ -41,6 +47,11 @@ func queryRRset(qname string, qtype uint16) (*RRSet, error) {
 				result.rrSet = append(result.rrSet, rr)
 			}
 		}
+		FetchedRecords = append(FetchedRecords, FetchedRecord{
+			Qname:  qname,
+			Qtype:  dns.TypeToString[qtype],
+			Record: rr,
+		})
 	}
 	return result, nil
 }

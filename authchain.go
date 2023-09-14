@@ -1,9 +1,10 @@
 package goresolver
 
 import (
-	"github.com/miekg/dns"
 	"log"
 	"strings"
+
+	"github.com/miekg/dns"
 )
 
 // AuthenticationChain represents the DNSSEC chain of trust from the
@@ -53,7 +54,7 @@ func (authChain *AuthenticationChain) Populate(domainName string) error {
 // delegation using the lower level methods in SignedZone.
 func (authChain *AuthenticationChain) Verify(answerRRset *RRSet) error {
 	if len(authChain.delegationChain) == 0 {
-		return ErrDnskeyNotAvailable	
+		return ErrDnskeyNotAvailable
 	}
 
 	signedZone := authChain.delegationChain[0]

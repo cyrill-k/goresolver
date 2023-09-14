@@ -1,9 +1,10 @@
 package goresolver
 
 import (
-	"github.com/miekg/dns"
 	"log"
 	"net"
+
+	"github.com/miekg/dns"
 )
 
 const MaxReturnedIPAddressesCount = 64
@@ -127,6 +128,7 @@ func (resolver *Resolver) StrictNSQuery(qname string, qtype uint16) (rrSet []dns
 		return nil, ErrResourceNotSigned
 	}
 
+	// isn't a check missing if signerName is an actual parent domain of the answer record?
 	signerName := answer.SignerName()
 
 	authChain := NewAuthenticationChain()
