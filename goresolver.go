@@ -2,6 +2,7 @@ package goresolver
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -97,20 +98,28 @@ func queryDelegation(domainName string) (signedZone *SignedZone, err error) {
 	signedZone = NewSignedZone(domainName)
 
 	// dummy query NSEC records
-	queryRRset(domainName, dns.TypeNSEC)
-	queryRRset(domainName, dns.TypeNSEC3)
-	queryRRset(domainName, dns.TypeNSEC3PARAM)
 
 	signedZone.dnskey, err = queryRRset(domainName, dns.TypeDNSKEY)
 	if err != nil {
-		return nil, err
-	}
-	signedZone.pubKeyLookup = make(map[uint16]*dns.DNSKEY)
-	for _, rr := range signedZone.dnskey.rrSet {
-		signedZone.addPubKey(rr.(*dns.DNSKEY))
+		fmt.Printf("ignoring missing DNSKEY since NSEC records may exist -> todo: check missing DNSKEY later: %s\n", err)
+		// return nil, err
+	} else {
+		signedZone.pubKeyLookup = make(map[uint16]*dns.DNSKEY)
+		for _, rr := range signedZone.dnskey.rrSet {
+			signedZone.addPubKey(rr.(*dns.DNSKEY))
+		}
 	}
 
-	signedZone.ds, _ = queryRRset(domainName, dns.TypeDS)
+	ds, nsec, nsec3, err := queryRRsetOrNsecRecords(domainName, dns.TypeDS)
+	if !ds.IsEmpty() {
+		signedZone.ds = ds
+	} else if nsec != nil {
+		signedZone.nsecStruct = nsec
+	} else if nsec3 != nil {
+		signedZone.nsec3Struct = nsec3
+	} else {
+		return signedZone, fmt.Errorf("Failed to fetch DS or NSEC(3) record")
+	}
 
 	return signedZone, nil
 }
