@@ -17,24 +17,36 @@ type Nsec struct {
 }
 
 type Nsec3 struct {
-	domain           string
-	nsec3Records     map[string]*RRSet
-	parentMatch      *RRSet
-	domainMatch      *RRSet
-	domainCover      *RRSet
-	wildcardMatch    *RRSet
-	wildcardCover    *RRSet
-	validationType   dns.Type
-	validationResult string
-	validationProofs []*RRSet
+	domain                 string
+	nsec3Records           map[string]*RRSet
+	closestEncloserName    string
+	closestEncloserOptOut  bool
+	closestEncloserRrSet   *RRSet
+	nextCloserName         string
+	nextCloserRrSet        *RRSet
+	wildcardName           string
+	wildcardMatchRrSet     *RRSet
+	wildcardCoverOnlyRrSet *RRSet
+	validationType         dns.Type
+	validationResult       string
+	validationProofs       []*RRSet
+
+	// fields for legacy validation
+	parentMatch   *RRSet
+	domainMatch   *RRSet
+	domainCover   *RRSet
+	wildcardMatch *RRSet
+	wildcardCover *RRSet
 }
 
 const (
-	ValidationNsecInexistantRecord       = "NSEC-INEXISTANT-RR"
-	ValidationNsecInexistantDomain       = "NSEC-INEXISTANT-DOMAIN"
-	ValidationNsecRecordExists           = "NSEC-RR-EXISTS"
-	ValidationInconsistentNsecStatements = "NSEC-INCONSISTENT"
-	ValidationMissingNsecStatements      = "NSEC-MISSING"
+	ValidationNsecInexistantRecord            = "NSEC-INEXISTANT-RR"
+	ValidationNsecInexistantDomain            = "NSEC-INEXISTANT-DOMAIN"
+	ValidationNsecInexistantDomainWithOptOut  = "NSEC-INEXISTANT-DOMAIN-OPT-OUT"
+	ValidationNsecRecordExists                = "NSEC-RR-EXISTS"
+	ValidationInconsistentNsecStatements      = "NSEC-INCONSISTENT"
+	ValidationMissingNsecStatements           = "NSEC-MISSING"
+	ValidationMissingNsecStatementsWithOptOut = "NSEC-MISSING-OPT-OUT"
 )
 
 // NewSignedZone initializes a new SignedZone and returns it.
@@ -46,62 +58,181 @@ func NewNsec3(domain string) *Nsec3 {
 }
 
 func (n *Nsec3) String() string {
-	description := fmt.Sprintf("<NSEC3 %s (%s): ", n.domain, n.validationResult)
-	isFirst := true
-	if n.domainMatch != nil {
-		if !isFirst {
-			description += ", "
+	description := fmt.Sprintf("<NSEC3 %s %s: ", n.domain, n.validationResult)
+	if n.closestEncloserRrSet != nil {
+		options := ""
+		if n.closestEncloserRrSet.rrSet[0].(*dns.NSEC3).Flags&(1<<0) != 0 {
+			options += "[OPT-OUT] "
 		}
-		isFirst = false
-		description += "∃ domain (hash=" + n.domainMatch.rrSet[0].Header().Name + ", "
-		for _, t := range n.domainMatch.rrSet[0].(*dns.NSEC3).TypeBitMap {
+		description += "closest encloser " + options + "(domain=" + n.closestEncloserName + ", hash=" + n.closestEncloserRrSet.rrSet[0].Header().Name + ", "
+		for _, t := range n.closestEncloserRrSet.rrSet[0].(*dns.NSEC3).TypeBitMap {
 			description += " " + dns.Type(t).String()
 		}
 		description += ")"
-	}
-	if n.domainCover != nil {
-		if !isFirst {
-			description += ", "
+
+		if n.nextCloserRrSet != nil {
+			description += ", !∃ next closer name (domain=" + n.nextCloserName + ", hash=" + n.nextCloserRrSet.rrSet[0].Header().Name + ")"
 		}
-		isFirst = false
-		description += "!∃ domain (hash=" + n.domainCover.rrSet[0].Header().Name + ")"
-	}
-	if n.wildcardMatch != nil {
-		if !isFirst {
-			description += ", "
+
+		if n.wildcardMatchRrSet != nil {
+			description += ", ∃ wildcard (domain=" + n.wildcardName + ", hash=" + n.wildcardMatchRrSet.rrSet[0].Header().Name + ", "
+			for _, t := range n.wildcardMatchRrSet.rrSet[0].(*dns.NSEC3).TypeBitMap {
+				description += " " + dns.Type(t).String()
+			}
+			description += ")"
 		}
-		isFirst = false
-		description += "∃ wildcard (hash=" + n.wildcardMatch.rrSet[0].Header().Name + ", "
-		for _, t := range n.wildcardMatch.rrSet[0].(*dns.NSEC3).TypeBitMap {
-			description += " " + dns.Type(t).String()
+
+		if n.wildcardCoverOnlyRrSet != nil {
+			description += ", !∃ wildcard (domain=" + n.wildcardName + ", hash=" + n.wildcardCoverOnlyRrSet.rrSet[0].Header().Name + ")"
 		}
-		description += ")"
-	}
-	if n.wildcardCover != nil {
-		if !isFirst {
-			description += ", "
-		}
-		isFirst = false
-		description += "!∃ wildcard (hash=" + n.wildcardCover.rrSet[0].Header().Name + ")"
 	}
 	description += ">"
 	return description
 }
 
+// finds the three relevant NSEC3 records as described in https://datatracker.ietf.org/doc/html/rfc7129#section-5.5: the closest encloser, the next closer name, and the wildcard name. Returns false if no encloser exists.
+func (n *Nsec3) findClosestEncloserWithRelevantRecords() bool {
+	// find closest encloser (domain + RRSet)
+	domainComponents := strings.Split(n.domain, ".")
+	var nextCloserName string
+	var wildcardName string
+validate:
+	for nComponents := len(domainComponents); nComponents >= 2; nComponents-- {
+		currentDomain := strings.Join(domainComponents[len(domainComponents)-nComponents:], ".")
+		for _, rrSet := range n.nsec3Records {
+			rrNsec3 := rrSet.rrSet[0].(*dns.NSEC3)
+			if rrNsec3.Match(currentDomain) {
+				n.closestEncloserName = currentDomain
+				n.closestEncloserOptOut = rrNsec3.Flags&(1<<0) != 0
+				if nComponents < len(domainComponents) {
+					nextCloserName = strings.Join(domainComponents[len(domainComponents)-nComponents-1:], ".")
+				}
+				wildcardName = strings.Join([]string{"*", n.closestEncloserName}, ".")
+				n.closestEncloserRrSet = rrSet
+				break validate
+			}
+		}
+	}
+	if n.closestEncloserName == "" {
+		// did not find any encloser NSEC record
+		return false
+	}
+
+	// TODO: this is currently not looking at inconsistencies in nsec records, i.e., once we found a match/cover nsec3 record, we simply accept it
+	for _, rrSet := range n.nsec3Records {
+		rrNsec3 := rrSet.rrSet[0].(*dns.NSEC3)
+		if rrNsec3.Cover(nextCloserName) {
+			n.nextCloserName = nextCloserName
+			n.nextCloserRrSet = rrSet
+			break
+		}
+	}
+	for _, rrSet := range n.nsec3Records {
+		rrNsec3 := rrSet.rrSet[0].(*dns.NSEC3)
+		if rrNsec3.Match(wildcardName) {
+			n.wildcardName = wildcardName
+			n.wildcardMatchRrSet = rrSet
+			break
+		} else if rrNsec3.Cover(wildcardName) {
+			n.wildcardName = wildcardName
+			n.wildcardCoverOnlyRrSet = rrSet
+			break
+		}
+	}
+	return true
+}
+
 func (n *Nsec3) validate(rrType dns.Type) error {
 	n.validationType = rrType
 	// TODO: don't use direct parent, look for possible parents in all NSEC3 records
+	encloserExists := n.closestEncloserName != ""
 
-	// TODO: first push existing changes and remove this todo!!!!
-	// find closest encloser (domain + RRSet)
-	// closestEncloserName := ...
+	var exactDomainMatch bool
+	// check if all necessary nsec records exist, otherwise return an error
+	if !encloserExists {
+		n.validationResult = ValidationMissingNsecStatements
+		return fmt.Errorf("No encloser NSEC3 record found")
+	}
 
-	// check if next closer name exists (if it must exist)
-	// nextCloserName := ...
+	if n.closestEncloserName == n.domain {
+		exactDomainMatch = true
+		// an NSEC3 record for the domain is found, continue processing
+	} else if n.nextCloserRrSet == nil {
+		if n.closestEncloserOptOut {
+			n.validationResult = ValidationMissingNsecStatementsWithOptOut
+		} else {
+			n.validationResult = ValidationMissingNsecStatements
+		}
+		return fmt.Errorf("No NSEC3 record covers the domain")
+	} else if n.wildcardMatchRrSet == nil && n.wildcardCoverOnlyRrSet == nil {
+		if n.closestEncloserOptOut {
+			n.validationResult = ValidationMissingNsecStatementsWithOptOut
+		} else {
+			n.validationResult = ValidationMissingNsecStatements
+		}
+		return fmt.Errorf("No NSEC3 record covers/matches the wildcard domain")
+	}
 
-	// check if wildcard domaine exists (if it must exist)
-	// wilcardName := ...
+	// TODO: could also detect other inconsistencies, e.g., multiple records covering the same domain
+	if n.wildcardMatchRrSet != nil && n.wildcardCoverOnlyRrSet != nil {
+		n.validationResult = ValidationInconsistentNsecStatements
+		return fmt.Errorf("The target's wildcard domain is both matched and covered with different NSEC3 records")
+	}
 
+	domainContainsRr := slices.Contains(n.closestEncloserRrSet.rrSet[0].(*dns.NSEC3).TypeBitMap, uint16(rrType))
+	wildcardContainsRr := n.wildcardMatchRrSet != nil && slices.Contains(n.wildcardMatchRrSet.rrSet[0].(*dns.NSEC3).TypeBitMap, uint16(rrType))
+	if exactDomainMatch {
+		if n.wildcardMatchRrSet != nil {
+			// check for matched RR types in domain and wildcard (+ check for conflicts)
+			if domainContainsRr != wildcardContainsRr {
+				n.validationResult = ValidationInconsistentNsecStatements
+				n.validationProofs = []*RRSet{n.closestEncloserRrSet, n.wildcardMatchRrSet}
+				return fmt.Errorf("Wildcard and domain NSEC3 records claim different state")
+			} else {
+				if domainContainsRr {
+					n.validationResult = ValidationNsecRecordExists
+				} else {
+					n.validationResult = ValidationNsecInexistantRecord
+				}
+				n.validationProofs = []*RRSet{n.closestEncloserRrSet, n.wildcardMatchRrSet}
+				return nil
+			}
+		} else {
+			// check for matched RR types in domain
+			if domainContainsRr {
+				n.validationResult = ValidationNsecRecordExists
+			} else {
+				n.validationResult = ValidationNsecInexistantRecord
+			}
+			n.validationProofs = []*RRSet{n.closestEncloserRrSet, n.wildcardCoverOnlyRrSet}
+			return nil
+		}
+	} else {
+		if n.wildcardMatchRrSet != nil {
+			// check for matched RR types in wildcard
+			if wildcardContainsRr {
+				n.validationResult = ValidationNsecRecordExists
+			} else {
+				n.validationResult = ValidationNsecInexistantRecord
+			}
+			n.validationProofs = []*RRSet{n.closestEncloserRrSet, n.nextCloserRrSet, n.wildcardMatchRrSet}
+			return nil
+		} else {
+			// neither domain nor wildcard matched
+			if n.closestEncloserOptOut {
+				n.validationResult = ValidationNsecInexistantDomainWithOptOut
+				n.validationProofs = []*RRSet{n.closestEncloserRrSet, n.nextCloserRrSet, n.wildcardCoverOnlyRrSet}
+			} else {
+				n.validationResult = ValidationNsecInexistantDomain
+				n.validationProofs = []*RRSet{n.closestEncloserRrSet, n.nextCloserRrSet, n.wildcardCoverOnlyRrSet}
+			}
+			return nil
+		}
+	}
+}
+
+func (n *Nsec3) validateOld(rrType dns.Type) error {
+	n.validationType = rrType
 	parentDomain := strings.Join(strings.Split(n.domain, ".")[1:], ".")
 	wildcardDomain := strings.Join([]string{"*", parentDomain}, ".")
 	for _, rrSet := range n.nsec3Records {
@@ -234,16 +365,31 @@ func (n *Nsec3) validate(rrType dns.Type) error {
 
 // SignedZone represents a DNSSEC-enabled zone, its DNSKEY and DS records
 type SignedZone struct {
-	zone         string
-	dnskey       *RRSet
-	ds           *RRSet
-	parentZone   *SignedZone
-	pubKeyLookup map[uint16]*dns.DNSKEY
-	nsec         *RRSet
-	nsec3        *RRSet
-	nsecStruct   *Nsec
-	nsec3Struct  *Nsec3
-	nsec3param   *RRSet
+	zone          string
+	dnskey        *RRSet
+	ds            *RRSet
+	parentZone    *SignedZone
+	pubKeyLookup  map[uint16]*dns.DNSKEY
+	nsec          *RRSet
+	nsec3         *RRSet
+	nsecStruct    *Nsec
+	dsNsec3Struct *Nsec3
+	nsec3param    *RRSet
+}
+
+func (z SignedZone) String() string {
+	records := []string{}
+	if z.dnskey != nil && !z.dnskey.IsEmpty() {
+		records = append(records, "DNSKEY")
+	}
+	if z.ds != nil && !z.ds.IsEmpty() {
+		records = append(records, "DS")
+	}
+	if z.dsNsec3Struct != nil {
+		records = append(records, "NSEC3 (DS)")
+	}
+	description := fmt.Sprintf("<Zone %s: %s>", z.zone, strings.Join(records, ", "))
+	return description
 }
 
 // lookupPubkey returns a DNSKEY by its keytag

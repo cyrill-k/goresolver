@@ -116,12 +116,12 @@ func queryDelegation(domainName string) (signedZone *SignedZone, err error) {
 	} else if nsec != nil {
 		signedZone.nsecStruct = nsec
 	} else if nsec3 != nil {
-		signedZone.nsec3Struct = nsec3
+		signedZone.dsNsec3Struct = nsec3
 	} else {
-		return signedZone, fmt.Errorf("Failed to fetch DS or NSEC(3) record")
+		return signedZone, errors.New("Failed to fetch DS or NSEC(3) record")
 	}
 
-	return signedZone, nil
+	return signedZone, err
 }
 
 // NewResolver initializes the package Resolver instance using the default

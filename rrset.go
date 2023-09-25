@@ -1,6 +1,7 @@
 package goresolver
 
 import (
+	"errors"
 	"fmt"
 	"log"
 
@@ -33,21 +34,11 @@ func queryRRsetOrNsecRecords(qname string, qtype uint16) (*RRSet, *Nsec, *Nsec3,
 			}
 		}
 		if nsec3RecordsExist {
-			err := nsec3.validate(dns.Type(qtype))
-			fmt.Printf("Validation of NSEC3 records resulted in %s (error=\"%s\", status=%s)\n", nsec3.validationResult, err, nsec3)
-			if err != nil {
-				fmt.Printf("Error in NSEC3 validation: %s (status=%s)", err, nsec3)
-				return answerRrSet, nil, nsec3, err
-			}
-			result := nsec3.validationResult
-			if result == ValidationNsecRecordExists || result == ValidationMissingNsecStatements || result == ValidationInconsistentNsecStatements {
-				return answerRrSet, nil, nsec3, fmt.Errorf("%s record was not returned but should exist according to NSEC3 record: %v", dns.TypeToString[qtype], nsec3)
-			}
+			nsec3.findClosestEncloserWithRelevantRecords()
+			return answerRrSet, nil, nsec3, nil
 		}
 
-		// TODO: fix return statement
-		log.Panic("stop")
-		return nil, nil, nil, nil
+		return answerRrSet, nil, nil, errors.New("Neither DS nor NSEC records were returned")
 	}
 }
 
