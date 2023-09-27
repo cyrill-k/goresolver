@@ -51,9 +51,11 @@ func queryRRsets(qname string, qtype uint16, includeAuthoritative bool) (*RRSet,
 		Message: r,
 	})
 
+	result := NewSignedRRSet()
+
 	if err != nil {
 		log.Printf("cannot lookup %v", err)
-		return nil, nil, err
+		return result, nil, err
 	}
 
 	if r.Rcode == dns.RcodeNameError {
@@ -62,7 +64,6 @@ func queryRRsets(qname string, qtype uint16, includeAuthoritative bool) (*RRSet,
 	}
 
 	// answer section
-	result := NewSignedRRSet()
 	for _, rr := range r.Answer {
 		switch t := rr.(type) {
 		case *dns.RRSIG:
@@ -75,6 +76,7 @@ func queryRRsets(qname string, qtype uint16, includeAuthoritative bool) (*RRSet,
 		FetchedRecords = append(FetchedRecords, FetchedRecord{
 			Qname:  qname,
 			Qtype:  dns.TypeToString[qtype],
+			Atype:  dns.TypeToString[rr.Header().Rrtype],
 			Record: rr,
 		})
 	}
@@ -110,6 +112,7 @@ func queryRRsets(qname string, qtype uint16, includeAuthoritative bool) (*RRSet,
 			FetchedRecords = append(FetchedRecords, FetchedRecord{
 				Qname:  qname,
 				Qtype:  dns.TypeToString[qtype],
+				Atype:  dns.TypeToString[rr.Header().Rrtype],
 				Record: rr,
 			})
 		}

@@ -48,6 +48,7 @@ type FetchedMessage struct {
 type FetchedRecord struct {
 	Qname  string
 	Qtype  string
+	Atype  string
 	Record dns.RR
 }
 
@@ -106,7 +107,13 @@ func queryDelegation(domainName string) (signedZone *SignedZone, err error) {
 	} else {
 		signedZone.pubKeyLookup = make(map[uint16]*dns.DNSKEY)
 		for _, rr := range signedZone.dnskey.rrSet {
-			signedZone.addPubKey(rr.(*dns.DNSKEY))
+			// TODO: handle CNAME records (follow to actual DNSKEY) -> not sure if this is necessary or if it this recursive lookup is always performed by DNS resolver
+			// example: dig dnskey nga.cn +dnssec @1.1.1.1
+			key, ok := rr.(*dns.DNSKEY)
+			if !ok {
+				return signedZone, fmt.Errorf("CNAME instead of DNSKEY returned")
+			}
+			signedZone.addPubKey(key)
 		}
 	}
 
@@ -117,11 +124,11 @@ func queryDelegation(domainName string) (signedZone *SignedZone, err error) {
 		signedZone.nsecStruct = nsec
 	} else if nsec3 != nil {
 		signedZone.dsNsec3Struct = nsec3
-	} else {
-		return signedZone, errors.New("Failed to fetch DS or NSEC(3) record")
+	} else if domainName != "." {
+		return signedZone, fmt.Errorf("Failed to fetch DS or NSEC(3) record: %s", domainName)
 	}
 
-	return signedZone, err
+	return signedZone, nil
 }
 
 // NewResolver initializes the package Resolver instance using the default

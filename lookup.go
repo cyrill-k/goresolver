@@ -1,6 +1,7 @@
 package goresolver
 
 import (
+	"fmt"
 	"log"
 	"net"
 
@@ -139,6 +140,50 @@ func (resolver *Resolver) StrictNSQuery(qname string, qtype uint16) (rrSet []dns
 	}
 
 	err = authChain.Verify(answer)
+	if err != nil {
+		log.Printf("DNSSEC validation failed: %s\n", err)
+		return nil, err
+	}
+
+	return answer.rrSet, nil
+}
+
+func (resolver *Resolver) StrictNSQueryWithNsec3(qname string, qtype uint16) (rrSet []dns.RR, err error) {
+
+	if len(qname) < 1 {
+		return nil, ErrInvalidQuery
+	}
+
+	answer, err := queryRRset(qname, qtype)
+	if err != nil {
+		return nil, err
+	}
+
+	// if answer.IsEmpty() {
+	// return nil, ErrNoResult
+	// }
+
+	if !answer.IsEmpty() && !answer.IsSigned() {
+		return nil, fmt.Errorf("%s (%s:%s)", ErrResourceNotSigned, qname, dns.TypeToString[qtype])
+	}
+
+	// isn't a check missing if signerName is an actual parent domain of the answer record?
+
+	signerName := qname
+	if !answer.IsEmpty() {
+		signerName = answer.SignerName()
+	}
+
+	authChain := NewAuthenticationChain()
+	err = authChain.PopulateWithNsec(signerName)
+
+	if err == ErrNoResult {
+		return nil, err
+	} else if err != nil {
+		return nil, err
+	}
+
+	err = authChain.VerifyWithNsec(qname)
 	if err != nil {
 		log.Printf("DNSSEC validation failed: %s\n", err)
 		return nil, err

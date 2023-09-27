@@ -59,7 +59,7 @@ func (authChain *AuthenticationChain) VerifyWithNsec(domainName string) error {
 			// Verify the RRSIG of the DNSKEY RRset with the public KSK.
 			err := signedZone.verifyRRSIG(signedZone.dnskey)
 			if err != nil {
-				return ErrRrsigValidationError
+				return fmt.Errorf("%s (%s:DNSKEY)", ErrRrsigValidationError, domainName)
 			}
 		}
 
@@ -69,31 +69,31 @@ func (authChain *AuthenticationChain) VerifyWithNsec(domainName string) error {
 
 					err := signedZone.dsNsec3Struct.validate(dns.Type(dns.TypeDS))
 					if err != nil {
-						return err
+						return fmt.Errorf("%s (%s:DS)", err, signedZone.zone)
 					}
 					result := signedZone.dsNsec3Struct.validationResult
 					if false ||
 						result == ValidationNsecRecordExists ||
 						result == ValidationMissingNsecStatements ||
-						result == ValidationMissingNsecStatementsWithOptOut ||
+						// result == ValidationMissingNsecStatementsWithOptOut ||
 						result == ValidationInconsistentNsecStatements {
-						return fmt.Errorf("%s (NSEC3=%s)", ErrDsNotAvailable, result)
+						return fmt.Errorf("%s (%s:NSEC3=%s)", ErrDsNotAvailable, signedZone.zone, result)
 					} else {
 						return nil
 					}
 				}
-				return ErrDsNotAvailable
+				return fmt.Errorf("%s (%s:DS)", ErrDsNotAvailable, signedZone.zone)
 			}
 
 			err := signedZone.parentZone.verifyRRSIG(signedZone.ds)
 			if err != nil {
 				log.Printf("DS on %s doesn't validate against RRSIG %d\n", signedZone.zone, signedZone.ds.rrSig.KeyTag)
-				return ErrRrsigValidationError
+				return fmt.Errorf("%s (%s:DS)", ErrRrsigValidationError, signedZone.zone)
 			}
 			err = signedZone.verifyDS(signedZone.ds.rrSet)
 			if err != nil {
 				log.Printf("DS does not validate: %s", err)
-				return ErrDsInvalid
+				return fmt.Errorf("%s (%s:DS)", ErrDsInvalid, signedZone.zone)
 			}
 		}
 	}
