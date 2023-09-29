@@ -237,7 +237,7 @@ func getNsecRecords(domain string, qtype uint16) (*NsecStatus, error) {
 		if nComponents == len(domainComponents) {
 			recordType = qtype
 		}
-		rrSet, _, _, err := queryRRsetOrNsecRecords(currentDomain, dns.TypeNSEC3PARAM)
+		rrSet, _, _, _, err := queryRRsetOrNsecRecords(currentDomain, dns.TypeNSEC3PARAM)
 		if err != nil {
 			status.unprotectedDomains = append(status.unprotectedDomains, currentDomain)
 			status.errors = append(status.errors, err.Error())
@@ -248,7 +248,7 @@ func getNsecRecords(domain string, qtype uint16) (*NsecStatus, error) {
 				status.errors = append(status.errors, "wrong DNS type returned")
 			} else {
 				fmt.Println("NSEC3PARAM detected, checking for NSEC3 records")
-				_, _, nsec3, err := queryRRsetOrNsecRecords(currentDomain, dns.TypeNSEC3)
+				_, _, nsec3, _, err := queryRRsetOrNsecRecords(currentDomain, dns.TypeNSEC3)
 				if err != nil {
 					status.unprotectedDomains = append(status.unprotectedDomains, currentDomain)
 					status.errors = append(status.errors, err.Error())
@@ -270,9 +270,9 @@ func getNsecRecords(domain string, qtype uint16) (*NsecStatus, error) {
 			}
 		} else {
 			fmt.Println("no NSEC3PARAM detected, checking for NSEC records")
-			nsecRecord, _, _, err := queryRRsetOrNsecRecords(currentDomain, dns.TypeNSEC)
+			nsecRecord, _, _, _, err := queryRRsetOrNsecRecords(currentDomain, dns.TypeNSEC)
 			if err != nil {
-				_, nsec, _, errDsRecord := queryRRsetOrNsecRecords(currentDomain, recordType)
+				_, nsec, _, _, errDsRecord := queryRRsetOrNsecRecords(currentDomain, recordType)
 				if errDsRecord != nil {
 					status.unprotectedDomains = append(status.unprotectedDomains, currentDomain)
 					status.errors = append(status.errors, errDsRecord.Error())
@@ -287,7 +287,7 @@ func getNsecRecords(domain string, qtype uint16) (*NsecStatus, error) {
 						components := strings.Split(currentDomain, ".")
 						wildcardDomain := strings.Join(append([]string{"*"}, components[1:]...), ".")
 						if len(components) > 1 {
-							_, nsecWildcard, _, errWildcardDsRecord := queryRRsetOrNsecRecords(wildcardDomain, recordType)
+							_, nsecWildcard, _, _, errWildcardDsRecord := queryRRsetOrNsecRecords(wildcardDomain, recordType)
 							if errWildcardDsRecord != nil {
 								status.unprotectedDomains = append(status.unprotectedDomains, currentDomain)
 								status.errors = append(status.errors, "Failed to fetch DS record for wildcard domain")

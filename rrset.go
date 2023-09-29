@@ -11,6 +11,7 @@ type RRSet struct {
 	domain string
 	rrSet  []dns.RR
 	rrSig  *dns.RRSIG
+	rCode  int
 }
 
 func queryRRset(qname string, qtype uint16) (*RRSet, error) {
@@ -18,11 +19,13 @@ func queryRRset(qname string, qtype uint16) (*RRSet, error) {
 	return answerRrSet, err
 }
 
-func queryRRsetOrNsecRecords(qname string, qtype uint16) (*RRSet, *Nsec, *Nsec3, error) {
+func queryRRsetOrNsecRecords(qname string, qtype uint16) (*RRSet, *Nsec, *Nsec3, *SOA, error) {
 	answerRrSet, authoritativeRrSets, err := queryRRsets(qname, qtype, true)
 	if !answerRrSet.IsEmpty() {
-		return answerRrSet, nil, nil, err
+		return answerRrSet, nil, nil, nil, err
 	} else {
+		// TODO: verify NSEC(3) and SOA RRSIGs
+
 		// no record found, check if record is supposed to exist (via NSEC or NSEC3)
 		nsec3RecordsExist := false
 		nsec3 := NewNsec3(qname)
@@ -34,7 +37,7 @@ func queryRRsetOrNsecRecords(qname string, qtype uint16) (*RRSet, *Nsec, *Nsec3,
 		}
 		if nsec3RecordsExist {
 			nsec3.findClosestEncloserWithRelevantRecords()
-			return answerRrSet, nil, nsec3, nil
+			return answerRrSet, nil, nsec3, nil, nil
 		}
 
 		nsecRecordsExist := false
@@ -47,10 +50,22 @@ func queryRRsetOrNsecRecords(qname string, qtype uint16) (*RRSet, *Nsec, *Nsec3,
 		}
 		if nsecRecordsExist {
 			nsec.findDomainAndWildcardRecords()
-			return answerRrSet, nsec, nil, nil
+			return answerRrSet, nsec, nil, nil, nil
 		}
 
-		return answerRrSet, nil, nil, fmt.Errorf("Neither %s nor NSEC records were returned", dns.TypeToString[qtype])
+		soaRecordsExist := false
+		soa := NewSoaRecord(qname)
+		for domain, rrSets := range authoritativeRrSets {
+			if rr, ok := rrSets[dns.Type(dns.TypeSOA)]; ok {
+				soaRecordsExist = true
+				soa.soaRecords[domain] = rr
+			}
+		}
+		if soaRecordsExist {
+			return answerRrSet, nil, nil, soa, nil
+		}
+
+		return answerRrSet, nil, nil, nil, fmt.Errorf("Neither %s nor NSEC records were returned", dns.TypeToString[qtype])
 	}
 }
 
@@ -69,6 +84,8 @@ func queryRRsets(qname string, qtype uint16, includeAuthoritative bool) (*RRSet,
 		log.Printf("cannot lookup %v", err)
 		return result, nil, err
 	}
+
+	result.rCode = r.Rcode
 
 	if r.Rcode == dns.RcodeNameError {
 		log.Printf("no such domain %s -> ignoring for now since NSEC records may exist\n", qname)

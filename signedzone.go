@@ -44,6 +44,11 @@ type Nsec3 struct {
 	wildcardCover *RRSet
 }
 
+type SOA struct {
+	domain     string
+	soaRecords map[string]*RRSet
+}
+
 const (
 	ValidationNsecInexistantRecord            = "NSEC-INEXISTANT-RR"
 	ValidationNsecInexistantDomain            = "NSEC-INEXISTANT-DOMAIN"
@@ -204,6 +209,13 @@ func NewNsec3(domain string) *Nsec3 {
 	return &Nsec3{
 		domain:       domain,
 		nsec3Records: map[string]*RRSet{},
+	}
+}
+
+func NewSoaRecord(domain string) *SOA {
+	return &SOA{
+		domain:     domain,
+		soaRecords: map[string]*RRSet{},
 	}
 }
 
@@ -547,6 +559,7 @@ type SignedZone struct {
 	dsNsecStruct  *Nsec
 	dsNsec3Struct *Nsec3
 	nsec3param    *RRSet
+	soaStruct     *SOA
 }
 
 func (z SignedZone) String() string {

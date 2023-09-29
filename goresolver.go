@@ -102,7 +102,7 @@ func queryDelegation(domainName string) (signedZone *SignedZone, err error) {
 
 	signedZone.dnskey, err = queryRRset(domainName, dns.TypeDNSKEY)
 	if err != nil {
-		fmt.Printf("ignoring missing DNSKEY since NSEC records may exist -> todo: check missing DNSKEY later: %s\n", err)
+		fmt.Printf("ignoring missing DNSKEY since NSEC records may exist: %s\n", err)
 		// return nil, err
 	} else {
 		signedZone.pubKeyLookup = make(map[uint16]*dns.DNSKEY)
@@ -117,15 +117,18 @@ func queryDelegation(domainName string) (signedZone *SignedZone, err error) {
 		}
 	}
 
-	ds, nsec, nsec3, err := queryRRsetOrNsecRecords(domainName, dns.TypeDS)
+	ds, nsec, nsec3, soa, err := queryRRsetOrNsecRecords(domainName, dns.TypeDS)
 	if !ds.IsEmpty() {
 		signedZone.ds = ds
 	} else if nsec != nil {
 		signedZone.dsNsecStruct = nsec
 	} else if nsec3 != nil {
 		signedZone.dsNsec3Struct = nsec3
+	} else if soa != nil {
+		signedZone.soaStruct = soa
 	} else if domainName != "." {
-		return signedZone, fmt.Errorf("Failed to fetch DS or NSEC(3) record: %s", domainName)
+		fmt.Printf("ignoring missing subdomain/other errors to allow (partial) verification: %s\n", err)
+		// return signedZone, fmt.Errorf("Failed to fetch DS or NSEC(3) record (%s:DS)", domainName)
 	}
 
 	return signedZone, nil

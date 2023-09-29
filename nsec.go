@@ -65,8 +65,11 @@ func (authChain *AuthenticationChain) VerifyWithNsec(domainName string) error {
 
 		if signedZone.parentZone != nil {
 			if signedZone.ds.IsEmpty() {
-				if signedZone.dsNsec3Struct != nil {
+				if signedZone.ds.rCode == dns.RcodeNameError {
+					// TODO: if the NSEC3 validation (with opt-out) returns missing domain but the query returns an entry, then this could be logged as an insecure delegation
+				}
 
+				if signedZone.dsNsec3Struct != nil {
 					err := signedZone.dsNsec3Struct.validate(dns.Type(dns.TypeDS))
 					if err != nil {
 						return fmt.Errorf("%s (%s:DS)", err, signedZone.zone)
@@ -83,7 +86,6 @@ func (authChain *AuthenticationChain) VerifyWithNsec(domainName string) error {
 					}
 				}
 				if signedZone.dsNsecStruct != nil {
-
 					err := signedZone.dsNsecStruct.validate(dns.Type(dns.TypeDS))
 					if err != nil {
 						return fmt.Errorf("%s (%s:DS)", err, signedZone.zone)
