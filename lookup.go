@@ -4,11 +4,39 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"strings"
 
 	"github.com/miekg/dns"
 )
 
 const MaxReturnedIPAddressesCount = 64
+
+type NsecStatus struct {
+	nsecProtectedDomains  []string
+	nsec3ProtectedDomains []string
+	nsec3OptOutDomains    []string
+	unprotectedDomains    []string
+	errors                []string
+}
+
+func (s *NsecStatus) GenerateCsvHeaders() []string {
+	return []string{"domain", "result", "nsec-protected", "nsec3-protected", "nsec3-opt-out", "unprotected", "errors"}
+}
+
+func (s *NsecStatus) GenerateCsvRow(domain, result string) []string {
+	return []string{domain, result, strings.Join(s.nsecProtectedDomains, ";"), strings.Join(s.nsec3ProtectedDomains, ";"), strings.Join(s.nsec3OptOutDomains, ";"), strings.Join(s.unprotectedDomains, ";"), strings.Join(s.errors, ";")}
+}
+
+func (s *NsecStatus) String() string {
+	description := "<NsecStatus "
+	description += fmt.Sprintf("nsecProtectedDomains=%s, ", s.nsecProtectedDomains)
+	description += fmt.Sprintf("nsec3ProtectedDomains=%s, ", s.nsec3ProtectedDomains)
+	description += fmt.Sprintf("nsec3OptOutDomains=%s, ", s.nsec3OptOutDomains)
+	description += fmt.Sprintf("unprotectedDomains=%s, ", s.unprotectedDomains)
+	description += fmt.Sprintf("errors=%s", s.errors)
+	description += ">"
+	return description
+}
 
 func (resolver *Resolver) LookupIP(qname string) (ips []net.IP, err error) {
 
@@ -148,6 +176,10 @@ func (resolver *Resolver) StrictNSQuery(qname string, qtype uint16) (rrSet []dns
 	return answer.rrSet, nil
 }
 
+func (resolver *Resolver) FetchNsecProofOfAbsenceStatus(qname string, qtype uint16) (nsecStatus *NsecStatus, err error) {
+	return getNsecRecords(qname, qtype)
+}
+
 func (resolver *Resolver) StrictNSQueryWithNsec3(qname string, qtype uint16) (rrSet []dns.RR, err error) {
 
 	if len(qname) < 1 {
@@ -190,6 +222,112 @@ func (resolver *Resolver) StrictNSQueryWithNsec3(qname string, qtype uint16) (rr
 	}
 
 	return answer.rrSet, nil
+}
+
+func getNsecRecords(domain string, qtype uint16) (*NsecStatus, error) {
+	status := NsecStatus{}
+	domainComponents := strings.Split(domain, ".")
+	for nComponents := 1; nComponents <= len(domainComponents); nComponents++ {
+		currentDomain := strings.Join(domainComponents[len(domainComponents)-nComponents:len(domainComponents)], ".")
+		if currentDomain == "" {
+			currentDomain = "."
+		}
+		// Dummy type to trigger the resolver to return NSEC records
+		recordType := dns.TypeDS
+		if nComponents == len(domainComponents) {
+			recordType = qtype
+		}
+		rrSet, _, _, err := queryRRsetOrNsecRecords(currentDomain, dns.TypeNSEC3PARAM)
+		if err != nil {
+			status.unprotectedDomains = append(status.unprotectedDomains, currentDomain)
+			status.errors = append(status.errors, err.Error())
+		} else if !rrSet.IsEmpty() {
+			_, ok := rrSet.rrSet[0].(*dns.NSEC3PARAM)
+			if !ok {
+				status.unprotectedDomains = append(status.unprotectedDomains, currentDomain)
+				status.errors = append(status.errors, "wrong DNS type returned")
+			} else {
+				fmt.Println("NSEC3PARAM detected, checking for NSEC3 records")
+				_, _, nsec3, err := queryRRsetOrNsecRecords(currentDomain, dns.TypeNSEC3)
+				if err != nil {
+					status.unprotectedDomains = append(status.unprotectedDomains, currentDomain)
+					status.errors = append(status.errors, err.Error())
+				} else if nsec3 != nil {
+					err = nsec3.validate(dns.Type(dns.TypeNSEC3))
+					if err != nil {
+						status.unprotectedDomains = append(status.unprotectedDomains, currentDomain)
+						status.errors = append(status.errors, err.Error())
+					} else if nsec3.closestEncloserName == currentDomain {
+						if nsec3.closestEncloserOptOut {
+							status.nsec3OptOutDomains = append(status.nsec3OptOutDomains, currentDomain)
+						} else {
+							status.nsec3ProtectedDomains = append(status.nsec3ProtectedDomains, currentDomain)
+						}
+					} else {
+						status.unprotectedDomains = append(status.unprotectedDomains, currentDomain)
+					}
+				}
+			}
+		} else {
+			fmt.Println("no NSEC3PARAM detected, checking for NSEC records")
+			nsecRecord, _, _, err := queryRRsetOrNsecRecords(currentDomain, dns.TypeNSEC)
+			if err != nil {
+				_, nsec, _, errDsRecord := queryRRsetOrNsecRecords(currentDomain, recordType)
+				if errDsRecord != nil {
+					status.unprotectedDomains = append(status.unprotectedDomains, currentDomain)
+					status.errors = append(status.errors, errDsRecord.Error())
+				} else if nsec == nil {
+					status.unprotectedDomains = append(status.unprotectedDomains, currentDomain)
+					status.errors = append(status.errors, "No NSEC record returned")
+				} else {
+					nsec.validate(dns.Type(dns.TypeDS))
+					result := nsec.validationResult
+					fmt.Printf("nsec validation (DS record): %s\n", nsec.validationResult)
+					if nsec.validationResult == ValidationMissingNsecStatements {
+						components := strings.Split(currentDomain, ".")
+						wildcardDomain := strings.Join(append([]string{"*"}, components[1:]...), ".")
+						if len(components) > 1 {
+							_, nsecWildcard, _, errWildcardDsRecord := queryRRsetOrNsecRecords(wildcardDomain, recordType)
+							if errWildcardDsRecord != nil {
+								status.unprotectedDomains = append(status.unprotectedDomains, currentDomain)
+								status.errors = append(status.errors, "Failed to fetch DS record for wildcard domain")
+							} else {
+								nsecMerged, err := mergeNsecRecords(nsec, nsecWildcard)
+								if err != nil {
+									status.unprotectedDomains = append(status.unprotectedDomains, currentDomain)
+									status.errors = append(status.errors, "Failed to merge nsec and nsec (wildcard) records")
+								} else {
+									nsecMerged.findDomainAndWildcardRecords()
+									nsecMerged.validate(dns.Type(dns.TypeDS))
+									fmt.Printf("nsec validation (DS record + wildcard): %s\n", nsec.validationResult)
+									result = nsecMerged.validationResult
+								}
+							}
+
+						}
+					}
+					if result == ValidationNsecInexistantDomain {
+						status.nsecProtectedDomains = append(status.nsecProtectedDomains, currentDomain)
+					} else {
+						status.unprotectedDomains = append(status.unprotectedDomains, currentDomain)
+						status.errors = append(status.errors, "NSEC proof of absence could not be verified")
+					}
+				}
+			} else {
+				if nsecRecord.IsEmpty() {
+					status.unprotectedDomains = append(status.unprotectedDomains, currentDomain)
+					status.errors = append(status.errors, "No NSEC record was returned")
+				} else if currentDomain == nsecRecord.rrSet[0].(*dns.NSEC).Header().Name {
+					status.nsecProtectedDomains = append(status.nsecProtectedDomains, currentDomain)
+				} else {
+					status.unprotectedDomains = append(status.unprotectedDomains, currentDomain)
+					status.errors = append(status.errors, "NSEC record was returned for wrong domain")
+
+				}
+			}
+		}
+	}
+	return &status, nil
 }
 
 func formatResultRRs(signedRrset *RRSet) []net.IP {

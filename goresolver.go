@@ -121,7 +121,7 @@ func queryDelegation(domainName string) (signedZone *SignedZone, err error) {
 	if !ds.IsEmpty() {
 		signedZone.ds = ds
 	} else if nsec != nil {
-		signedZone.nsecStruct = nsec
+		signedZone.dsNsecStruct = nsec
 	} else if nsec3 != nil {
 		signedZone.dsNsec3Struct = nsec3
 	} else if domainName != "." {

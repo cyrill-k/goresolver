@@ -77,7 +77,23 @@ func (authChain *AuthenticationChain) VerifyWithNsec(domainName string) error {
 						result == ValidationMissingNsecStatements ||
 						// result == ValidationMissingNsecStatementsWithOptOut ||
 						result == ValidationInconsistentNsecStatements {
-						return fmt.Errorf("%s (%s:NSEC3=%s)", ErrDsNotAvailable, signedZone.zone, result)
+						return fmt.Errorf("%s [NSEC3=%s] (%s:DS)", ErrDsNotAvailable, result, signedZone.zone)
+					} else {
+						return nil
+					}
+				}
+				if signedZone.dsNsecStruct != nil {
+
+					err := signedZone.dsNsecStruct.validate(dns.Type(dns.TypeDS))
+					if err != nil {
+						return fmt.Errorf("%s (%s:DS)", err, signedZone.zone)
+					}
+					result := signedZone.dsNsecStruct.validationResult
+					if false ||
+						result == ValidationNsecRecordExists ||
+						result == ValidationMissingNsecStatements ||
+						result == ValidationInconsistentNsecStatements {
+						return fmt.Errorf("%s [NSEC=%s] (%s:DS)", ErrDsNotAvailable, result, signedZone.zone)
 					} else {
 						return nil
 					}

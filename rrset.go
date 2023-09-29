@@ -1,7 +1,6 @@
 package goresolver
 
 import (
-	"errors"
 	"fmt"
 	"log"
 
@@ -38,7 +37,20 @@ func queryRRsetOrNsecRecords(qname string, qtype uint16) (*RRSet, *Nsec, *Nsec3,
 			return answerRrSet, nil, nsec3, nil
 		}
 
-		return answerRrSet, nil, nil, errors.New("Neither DS nor NSEC records were returned")
+		nsecRecordsExist := false
+		nsec := NewNsec(qname)
+		for domain, rrSets := range authoritativeRrSets {
+			if rr, ok := rrSets[dns.Type(dns.TypeNSEC)]; ok {
+				nsecRecordsExist = true
+				nsec.nsecRecords[domain] = rr
+			}
+		}
+		if nsecRecordsExist {
+			nsec.findDomainAndWildcardRecords()
+			return answerRrSet, nsec, nil, nil
+		}
+
+		return answerRrSet, nil, nil, fmt.Errorf("Neither %s nor NSEC records were returned", dns.TypeToString[qtype])
 	}
 }
 
