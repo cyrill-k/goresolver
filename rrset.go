@@ -70,7 +70,6 @@ func queryRRsetOrNsecRecords(qname string, qtype uint16) (*RRSet, *Nsec, *Nsec3,
 }
 
 func queryRRsets(qname string, qtype uint16, includeAuthoritative bool) (*RRSet, map[string]map[dns.Type]*RRSet, error) {
-
 	r, err := resolver.queryFn(qname, qtype)
 	FetchedMessages = append(FetchedMessages, FetchedMessage{
 		Qname:   qname,

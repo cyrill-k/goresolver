@@ -317,12 +317,18 @@ func getNsecRecords(domain string, qtype uint16) (*NsecStatus, error) {
 				if nsecRecord.IsEmpty() {
 					status.unprotectedDomains = append(status.unprotectedDomains, currentDomain)
 					status.errors = append(status.errors, "No NSEC record was returned")
-				} else if currentDomain == nsecRecord.rrSet[0].(*dns.NSEC).Header().Name {
-					status.nsecProtectedDomains = append(status.nsecProtectedDomains, currentDomain)
 				} else {
-					status.unprotectedDomains = append(status.unprotectedDomains, currentDomain)
-					status.errors = append(status.errors, "NSEC record was returned for wrong domain")
+					nsecRr, isCorrectRecordType := nsecRecord.rrSet[0].(*dns.NSEC)
+					if !isCorrectRecordType {
+						status.unprotectedDomains = append(status.unprotectedDomains, currentDomain)
+						status.errors = append(status.errors, "CNAME instead of NSEC record was returned")
+					} else if currentDomain == nsecRr.Header().Name {
+						status.nsecProtectedDomains = append(status.nsecProtectedDomains, currentDomain)
+					} else {
+						status.unprotectedDomains = append(status.unprotectedDomains, currentDomain)
+						status.errors = append(status.errors, "NSEC record was returned for wrong domain")
 
+					}
 				}
 			}
 		}

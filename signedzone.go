@@ -143,6 +143,10 @@ func (n *Nsec) validate(rrType dns.Type) error {
 
 	exactDomainMatch := n.domainRrSet != nil && n.domain == n.domainRrSet.rrSet[0].(*dns.NSEC).Header().Name
 
+	if n.domainRrSet == nil {
+		n.validationResult = ValidationMissingNsecStatements
+		return fmt.Errorf("No domain NSEC record found")
+	}
 	if n.wildcardRrSet == nil {
 		if n.domainRrSet == nil {
 			n.validationResult = ValidationMissingNsecStatements
